@@ -174,7 +174,7 @@ By default, the lock is removed after the task has executed (using celery's `aft
 Chaining
 --------
 
-Chaining off of an AlreadyQueued task will result in the subsequent tasks never being executed. To solve this problem, use the CeleryOnce instead of Celery when creating your app:
+Chaining off of an AlreadyQueued task will result in the subsequent tasks never being executed. To solve this problem, use CeleryOnce instead of Celery when creating your app:
 
 .. code:: python
 
