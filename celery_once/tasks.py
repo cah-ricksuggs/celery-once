@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 from celery import Task, states
-from celery.result import EagerResult
+from celery.utils import uuid
+from celery.result import AsyncResult, EagerResult
 from inspect import getcallargs
 from .helpers import queue_once_key, get_redis, now_unix
 
 
 class AlreadyQueued(Exception):
-    def __init__(self, countdown):
+    def __init__(self, countdown, result=None):
         self.message = "Expires in {} seconds".format(countdown)
         self.countdown = countdown
+        self.result = AsyncResult(result)
 
 
 class QueueOnce(Task):
@@ -76,13 +78,15 @@ class QueueOnce(Task):
         once_timeout = once_options.get(
             'timeout', self.once.get('timeout', self.default_timeout))
 
-        key = self.get_key(args, kwargs)
-        try:
-            self.raise_or_lock(key, once_timeout)
-        except self.AlreadyQueued as e:
-            if once_graceful:
-                return EagerResult(None, None, states.REJECTED)
-            raise e
+        if not options.get('retries'):
+            key = self.get_key(args, kwargs)
+            options.setdefault('task_id', uuid())
+            try:
+                self.raise_or_lock(key, once_timeout, options['task_id'])
+            except self.AlreadyQueued as e:
+                if once_graceful:
+                    return EagerResult(None, None, states.REJECTED)
+                raise e
         return super(QueueOnce, self).apply_async(args, kwargs, **options)
 
     def get_key(self, args=None, kwargs=None):
@@ -103,7 +107,7 @@ class QueueOnce(Task):
         key = queue_once_key(self.name, call_args, restrict_to)
         return key
 
-    def raise_or_lock(self, key, expires):
+    def raise_or_lock(self, key, expires, task_id):
         """
         Checks if the task is locked and raises an exception, else locks
         the task.
@@ -113,13 +117,13 @@ class QueueOnce(Task):
         result = self.redis.get(key)
         if result:
             # Work out how many seconds remaining till the task expires.
-            remaining = int(result) - now
-            if remaining > 0:
-                raise self.AlreadyQueued(remaining)
+            remaining = self.redis.ttl(key)
+            if remaining and remaining > 0:
+                raise self.AlreadyQueued(remaining, result)
 
         # By default, the tasks and redis key expire after 60 minutes.
         # (meaning it will not be executed and the lock will clear).
-        self.redis.setex(key, expires, now + expires)
+        self.redis.setex(key, expires, task_id)
 
     def get_unlock_before_run(self):
         return self.once.get('unlock_before_run', False)

@@ -1,6 +1,5 @@
 from celery import Celery
 from celery_once import QueueOnce, AlreadyQueued
-from freezegun import freeze_time
 import pytest
 
 
@@ -24,6 +23,11 @@ def example_unlock_before_run_set_key(redis, a=1):
     redis.set("qo_example_unlock_before_run_set_key_a-1", b"1234")
     return result
 
+@app.task(name="example_retry", base=QueueOnce, once={'keys': []}, bind=True)
+def example_retry(self, redis, a=1):
+    if a > 0:
+        self.request.called_directly = False
+        self.retry(redis, a=0)
 
 def test_delay_1(redis):
     result = example.delay(redis)
@@ -31,16 +35,15 @@ def test_delay_1(redis):
     assert redis.get("qo_example_a-1") is None
 
 def test_delay_2(redis):
-    redis.set("qo_example_a-1", 10000000000)
+    redis.setex("qo_example_a-1", 10000000000, 1)
     try:
         example.delay(redis)
         pytest.fail("Didn't raise AlreadyQueued.")
     except AlreadyQueued:
         pass
 
-@freeze_time("2012-01-14")  # 1326499200
 def test_delay_3(redis):
-    redis.set("qo_example_a-1", 1326499200 - 60 * 60)
+    redis.setex("qo_example_a-1", -60 * 60, 1)
     example.delay(redis)
 
 
@@ -61,7 +64,7 @@ def test_apply_async_1(redis):
     assert redis.get("qo_example_a-1") is None
 
 def test_apply_async_2(redis):
-    redis.set("qo_example_a-1", 10000000000)
+    redis.setex("qo_example_a-1", 10000000000, 1)
     try:
         example.apply_async(args=(redis, ))
         pytest.fail("Didn't raise AlreadyQueued.")
@@ -69,7 +72,7 @@ def test_apply_async_2(redis):
         pass
 
 def test_apply_async_3(redis):
-    redis.set("qo_example_a-1", 10000000000)
+    redis.set("qo_example_a-1", 10000000000, 1)
     result = example.apply_async(args=(redis, ), once={'graceful': True})
     assert result.result is None
 
@@ -85,9 +88,8 @@ def test_apply_async_unlock_before_run_2(redis):
     assert redis.get("qo_example_unlock_before_run_set_key_a-1") == b"1234"
 
 
-@freeze_time("2012-01-14")  # 1326499200
 def test_apply_async_4(redis):
-    redis.set("qo_example_a-1", 1326499200 - 60 * 60)
+    redis.setex("qo_example_a-1", -60 * 60, 1)
     example.apply_async(args=(redis, ))
 
 def test_redis():
@@ -97,3 +99,7 @@ def test_redis():
 
 def test_default_timeout():
     assert example.default_timeout == 30 * 60
+
+def test_retry(redis):
+    result = example_retry.apply_async(args=(redis, ))
+    assert redis.get("qo_example_retry") is None

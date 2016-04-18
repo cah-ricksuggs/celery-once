@@ -1,6 +1,5 @@
 from celery import task
 from celery_once.tasks import QueueOnce, AlreadyQueued
-from freezegun import freeze_time
 import pytest
 
 
@@ -44,34 +43,30 @@ def test_get_key_bound_task():
     assert "qo_bound_task_a-1_b-2" == bound_task.get_key(kwargs={'a': 1, 'b': 2})
 
 
-@freeze_time("2012-01-14")  # 1326499200
 def test_raise_or_lock(redis):
     assert redis.get("test") is None
-    QueueOnce().raise_or_lock(key="test", expires=60)
-    assert redis.get("test") is not None
+    QueueOnce().raise_or_lock(key="test", expires=60, task_id=1)
+    assert redis.get("test") == b'1'
     assert redis.ttl("test") == 60
 
 
-@freeze_time("2012-01-14")  # 1326499200
 def test_raise_or_lock_locked(redis):
     # Set to expire in 30 seconds!
-    redis.set("test", 1326499200 + 30)
+    redis.setex("test", 30, 1)
     with pytest.raises(AlreadyQueued) as e:
-        QueueOnce().raise_or_lock(key="test", expires=60)
+        QueueOnce().raise_or_lock(key="test", expires=60, task_id=2)
     assert e.value.countdown == 30
-    assert e.value.message == "Expires in 30 seconds"
+    assert e.value.message == "Expires in {} seconds".format(e.value.countdown)
+    assert e.value.result.id == b'1'
 
-@freeze_time("2012-01-14")  # 1326499200
 def test_raise_or_lock_locked_and_expired(redis):
     # Set to have expired 30 ago seconds!
-    redis.set("test", 1326499200 - 30)
-    QueueOnce().raise_or_lock(key="test", expires=60)
-    assert redis.get("test") is not None
+    redis.setex("test", -30, 1)
+    QueueOnce().raise_or_lock(key="test", expires=60, task_id=2)
+    assert redis.get("test") == b'2'
     assert redis.ttl("test") == 60
 
 def test_clear_lock(redis):
     redis.set("test", 1326499200 + 30)
     QueueOnce().clear_lock("test")
     assert redis.get("test") is None
-
-
