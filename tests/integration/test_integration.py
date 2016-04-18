@@ -1,9 +1,9 @@
-from celery import Celery
+from celery_once.app import CeleryOnce
 from celery_once import QueueOnce, AlreadyQueued
 import pytest
+import mock
 
-
-app = Celery()
+app = CeleryOnce()
 app.conf.ONCE_REDIS_URL = 'redis://localhost:1337/0'
 app.conf.ONCE_DEFAULT_TIMEOUT = 30 * 60
 app.conf.CELERY_ALWAYS_EAGER = True
@@ -23,11 +23,16 @@ def example_unlock_before_run_set_key(redis, a=1):
     redis.set("qo_example_unlock_before_run_set_key_a-1", b"1234")
     return result
 
+@app.task(name="example_chained_task")
+def example_chained_task(redis):
+    redis.set("called", 1)
+
 @app.task(name="example_retry", base=QueueOnce, once={'keys': []}, bind=True)
 def example_retry(self, redis, a=1):
     if a > 0:
         self.request.called_directly = False
         self.retry(redis, a=0)
+
 
 def test_delay_1(redis):
     result = example.delay(redis)
