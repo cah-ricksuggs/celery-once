@@ -40,6 +40,7 @@ class QueueOnce(Task):
     """
     abstract = True
     once = {}
+    redis_cache = {}
 
     @property
     def config(self):
@@ -48,8 +49,10 @@ class QueueOnce(Task):
 
     @property
     def redis(self):
-        return get_redis(
-            getattr(self.config, "ONCE_REDIS_URL", "redis://localhost:6379/0"))
+        redis_url = getattr(self.config, "ONCE_REDIS_URL", "redis://localhost:6379/0")
+        if not redis_url in self.redis_cache:
+            self.redis_cache[redis_url] = get_redis(redis_url)
+        return self.redis_cache[redis_url]
 
     @property
     def default_timeout(self):
